@@ -1,0 +1,5 @@
+POST /get_note/
+{
+  "note_id": "some-uuid",
+  "password": "mypassword"
+}
