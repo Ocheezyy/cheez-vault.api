@@ -1,6 +1,0 @@
-POST /create_note/
-{
-  "content": "This is a secret note",
-  "password": "mypassword",
-  "ttl": 60  # 1 minute expiration
-}

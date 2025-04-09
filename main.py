@@ -1,22 +1,35 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
+from fastapi.middleware.cors import CORSMiddleware
+from cryptography.hazmat.primitives import hashes
+from fastapi import FastAPI, HTTPException
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from pydantic import BaseModel
+import redis.asyncio as redis
 import base64
-import os
-import redis
 import uuid
+import os
 
 
 load_dotenv()
 
 app = FastAPI()
+origins = [
+    # "http://localhost:5174",
+    os.environ.get("CORS_URL")
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 r = redis.Redis(
     host=os.environ.get("REDISHOST"),
-    port=os.environ.get("REDISPORT"),
+    port=int(os.environ.get("REDISPORT")),
     # user=os.environ.get("REDISUSER"),
     password=os.environ.get("REDISPASSWORD"),
     db=0
@@ -37,7 +50,7 @@ def derive_key(password: str, salt: bytes) -> bytes:
 class NoteCreate(BaseModel):
     content: str
     password: str | None = None 
-    ttl: int  # In seconds
+    ttl: int | None = None  # In seconds
 
 @app.post("/create_note/")
 async def create_note(note: NoteCreate):
@@ -55,7 +68,10 @@ async def create_note(note: NoteCreate):
     note_id = str(uuid.uuid4())
     
     # Store the encrypted note and salt in Redis with a TTL
-    await r.hmset(note_id, {"encrypted_note": encrypted_note.decode(), "salt": base64.b64encode(salt).decode()})
+    await r.hset(note_id, mapping={
+        "encrypted_note": encrypted_note.decode(),
+        "salt": base64.b64encode(salt).decode()
+    })
     await r.expire(note_id, note.ttl)
     
     return {"note_id": note_id, "message": "Note created successfully"}
@@ -65,7 +81,7 @@ async def create_note(note: NoteCreate):
 @app.get("/check_note/{note_id}")
 async def check_note(note_id: str):
     """Checks if a note requires a password."""
-    note_data = r.hgetall(note_id)
+    note_data = await r.hgetall(note_id)
 
     if not note_data:
         raise HTTPException(status_code=404, detail="Note not found or expired")
@@ -82,7 +98,7 @@ class NoteDecrypt(BaseModel):
 
 @app.post("/get_note/")
 async def get_note(note: NoteDecrypt):
-    note_data = r.hgetall(note.note_id)
+    note_data = await r.hgetall(note.note_id)
     
     if not note_data:
         raise HTTPException(status_code=404, detail="Note not found or expired")
